@@ -1,0 +1,3 @@
+include ':libdeconz'
+include ':app'
+rootProject.name = "SmartHome"
