@@ -1,11 +1,15 @@
 package at.nucifera.smarthome.ui.main
 
+import android.util.Log
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
+import at.nucifera.smarthome.extensions.roundToMinutes
 import org.joda.time.DateTime
 import org.joda.time.DateTimeZone
+import org.joda.time.Interval
 import org.joda.time.format.DateTimeFormat
 import org.joda.time.format.DateTimeFormatter
+import timber.log.Timber
 import java.util.*
 
 
@@ -13,7 +17,7 @@ class LineGraphViewModel : ViewModel() {
 
     val debugText = MutableLiveData<String>()
 
-    val rawData = listOf(
+    private val rawData = listOf(
         "2020-07-08T16:46:36.449855+00:00" to "25.7",
         "2020-07-08T19:08:44.527722+00:00" to "25.6",
         "2020-07-08T20:21:20.312123+00:00" to "25.0",
@@ -50,54 +54,97 @@ class LineGraphViewModel : ViewModel() {
         "2020-07-09T16:41:57.380908+00:00" to "26.1"
     )
 
-    fun prepareRawData() {
+    fun prepareRawData(): List<Pair<DateTime, Float?>> {
 
         try {
 
+            val preparedData = rawData.map { parseDateTime(it.first) to it.second.toFloat() }
 
-//            val local: DateTimeZone = dt.getZone()
-//            val tz2: TimeZone = TimeZone.getDefault()
-//            val localdt =
-//                DateTime(dt, DateTimeZone.forID(tz2.getID()))
+            val bucketSizeInMinutes = 5
 
-            val df: DateTimeFormatter = DateTimeFormat.forPattern(ISO_8601_DATE_FORMAT)
-            val dateTime: DateTime =
-                df.withOffsetParsed().parseDateTime("2020-07-08T16:46:36.449855+00:00")
+            // we start the first bucket 2.5 minutes before the first timestamp and create time stamp buckets in 5 minute intervals until all time stamps landed in a bucket
+            val roundedFirstTimeStamp =
+                preparedData.first().first.roundToMinutes(bucketSizeInMinutes)
 
 
-            val localTimeZoneOffsetToUtc =
-                Calendar.getInstance().timeZone.getOffset(dateTime.millis)
+            // if the first timestamp is rounded up, count down 5 minutes to start the first bucket to not miss the first time stamp
+            val firstBucket =
+                (if (roundedFirstTimeStamp.minusSeconds(150).isAfter(preparedData.first().first))
+                    roundedFirstTimeStamp.minusMinutes(5)
+                else
+                    roundedFirstTimeStamp)
+                    ?: return emptyList()
 
 
-            debugText.value =
-                dateTime.withZone(DateTimeZone.forOffsetMillis(localTimeZoneOffsetToUtc)).toString()
+            val buckets = mutableListOf(firstBucket)
+            while (buckets.last().isBefore(preparedData.last().first)) {
+                buckets.add(buckets.last().plusMinutes(5))
+            }
 
+            val bucketData = mutableListOf<Pair<DateTime, Float?>>()
 
-//            debugText.value = dateTime.chronology.toString()
-//            debugText.value = dateTime.toLocalDateTime().toString()
+            var preparedDataIndex = 0
 
+            buckets.forEach {
+                val interval = Interval(it.minusSeconds(150), it.plusSeconds(150))
+
+                var lastTimeStampWasInBucket = false
+                val bucketTemperatures = mutableListOf<Float>()
+
+                for (i in preparedDataIndex until preparedData.size) {
+                    if (interval.contains(preparedData[preparedDataIndex].first)) {
+                        bucketTemperatures.add(preparedData[preparedDataIndex].second)
+                        lastTimeStampWasInBucket = true
+                        preparedDataIndex = i
+                    } else {
+                        // if the previous timestamp was in the bucket, but this one isn't, than
+                        // the remaining time stamps will also not be in the bucket. Skip to next
+                        // bucket.
+                        if (lastTimeStampWasInBucket) {
+                            bucketData.add(it to bucketTemperatures.sum() / bucketTemperatures.size)
+                            return@forEach
+                        }
+                    }
+                }
+                if (bucketTemperatures.isEmpty()) {
+                    bucketData.add(it to null)
+                }
+
+            }
+
+            drawLineGraph(bucketData)
+
+            return bucketData
 
         } catch (e: Exception) {
             debugText.value = e.message
+            return listOf<Pair<DateTime, Float?>>()
         }
-
-
     }
 
-    fun convertTimeZones(
-        fromTimeZoneString: String?,
-        toTimeZoneString: String?, fromDateTime: String?
-    ): String? {
-        val fromTimeZone = DateTimeZone.forID(fromTimeZoneString)
-        val toTimeZone = DateTimeZone.forID(toTimeZoneString)
-        val dateTime = DateTime(fromDateTime, fromTimeZone)
-        val outputFormatter =
-            DateTimeFormat.forPattern("yyyy-MM-dd H:mm:ss").withZone(toTimeZone)
-        return outputFormatter.print(dateTime)
+    private fun drawLineGraph(data: List<Pair<DateTime, Float?>>) {
+        Timber.d("LINE DATA")
+        data.forEach {
+            Timber.d("${it.first} ... ${it.second}")
+        }
+        data.forEach {
+            Log.d("LINE DATA", "${it.first} ... ${it.second}")
+        }
+    }
+
+    private fun parseDateTime(dateTimeString: String): DateTime {
+        val df: DateTimeFormatter = DateTimeFormat.forPattern(ISO_8601_DATE_FORMAT)
+        return df.withOffsetParsed().parseDateTime(dateTimeString)
+    }
+
+    fun convertToLocalTime(dateTime: DateTime): DateTime {
+        val localTimeZoneOffsetToUtc =
+            Calendar.getInstance().timeZone.getOffset(dateTime.millis)
+
+        return dateTime.withZone(DateTimeZone.forOffsetMillis(localTimeZoneOffsetToUtc))
     }
 
     companion object {
         const val ISO_8601_DATE_FORMAT = "yyyy-MM-dd'T'HH:mm:ss.SSSSSSZ"
     }
-
 }

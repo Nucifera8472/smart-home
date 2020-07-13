@@ -29,11 +29,13 @@ class LineGraphFragment : Fragment() {
         super.onActivityCreated(savedInstanceState)
         viewModel = ViewModelProvider(this).get(LineGraphViewModel::class.java)
 
-        viewModel.prepareRawData()
 
         viewModel.debugText.observe(viewLifecycleOwner, Observer {
             view?.findViewById<TextView>(R.id.debug_text)?.text = it
         })
+
+        val data = viewModel.prepareRawData()
+
     }
 
 }
